@@ -172,29 +172,59 @@ bool MIPI_DSI_LP_Analyzer::GetStart()
 		return false;
 	}
 
-	/* Timings are ok: we got a start. */
+	/* Timings are ok: this is a start. */
 	DEBUG_PRINTF("Start is OK.");
-	
-	/* Mark start. */
 	mResults->AddMarker(sampleStart, AnalyzerResults::Start, mSettings->mPosChannel);
 
-	/* Advance D+ to D- ; we land after D- falling edge on both channels. */
+	/* Advance D+ to D-. */
 	mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
 	/* Mark D- falling edge. */
 	mResults->AddMarker(mDataN->GetSampleNumber(), AnalyzerResults::DownArrow, mSettings->mNegChannel);
 
+	/* D+ and D- are at the falling edge sample of D- pulse here. */
 	return true;
 }
 
 U64 MIPI_DSI_LP_Analyzer::GetBitstream()
 {
-	U64 bit_counter = 0xFFFF; /* Max number of bits allowed. */
+	U64 bitCounter = 0xFFFF * 8; /* Max number of bits allowed. */
 
 	data.clear();
 
 	/* Get bitstream. */
-	while (--bit_counter) {
-		DEBUG_PRINTF("GetData() loop. bit_counter = %lld, Dp = %lld , Dm = %lld", bit_counter, mDataP->GetSampleNumber(), mDataN->GetSampleNumber());
+	while (--bitCounter)
+	{
+		DEBUG_PRINTF("GetBitstream() loop. bit_counter = %lld, Dp = %lld , Dm = %lld", bitCounter, mDataP->GetSampleNumber(), mDataN->GetSampleNumber());
+
+		/* D+ and D- should be at the same sample here. */
+		{
+			/* If D+ is behind D-. */
+			if (mDataP->GetSampleNumber() < mDataN->GetSampleNumber()) {
+				/* Advance D+ to D-. */
+				mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
+			}
+			/* If D- is behind D+. */
+			if (mDataN->GetSampleNumber() < mDataP->GetSampleNumber()) {
+				/* Advance D- to D+. */
+				mDataN->AdvanceToAbsPosition(mDataP->GetSampleNumber());
+			}
+		}
+
+		/* Both D+ and D- should be low here. */
+		{
+			/* Check if D+ high. */
+			if (mDataP->GetBitState() == BIT_HIGH) {
+				/* Add error marker. */
+				mResults->AddMarker(mDataP->GetSampleNumber(), AnalyzerResults::ErrorX, mSettings->mPosChannel);
+				break;
+			}
+			/* Check if D- is high. */
+			if (mDataN->GetBitState() == BIT_HIGH) {
+				/* Add error marker. */
+				mResults->AddMarker(mDataN->GetSampleNumber(), AnalyzerResults::ErrorX, mSettings->mNegChannel);
+				break;
+			}
+		}
 
 		/* Check on which data line we've got next edge. */
 		if (mDataP->GetSampleOfNextEdge() <= mDataN->GetSampleOfNextEdge()) {
@@ -211,79 +241,56 @@ U64 MIPI_DSI_LP_Analyzer::GetBitstream()
 				break;
 			}
 
-			if (mDataN->GetBitState() != BIT_LOW) {
-
-			}
-
-			/* Bit's on D+. */
-			Bit bit;
-			DEBUG_PRINTF("D+ bit.");
 			/* Go to rising edge. */
 			mDataP->AdvanceToNextEdge();
-			/* Remember bit stats. */
-			bit.sampleBegin = mDataP->GetSampleNumber();
-			/* Advance D-. */
-			mDataN->AdvanceToAbsPosition(bit.sampleBegin);
+			/* Advance D- to D+. */
+			mDataN->AdvanceToAbsPosition(mDataP->GetSampleNumber());
 
-			/* Check if there are more edges. */
-			if (!mDataP->DoMoreTransitionsExistInCurrentData()) {
-				bit.sampleEnd = -1; /* Force stop condition detection. */
-			} else {
-				bit.sampleEnd = mDataP->GetSampleOfNextEdge(); /* Saleae will exit thread if there's no sample further. */
-			}
-
-			/* If there are no more transitions on D+ or next D- transition is earlier than D+ transition. */
-			if (!mDataP->DoMoreTransitionsExistInCurrentData() || (mDataN->GetSampleOfNextEdge() < mDataP->GetSampleOfNextEdge())) {
-				DEBUG_PRINTF("Stop condition (no more D- transitions) @ %lld / data.size() = %lli", bit.sampleBegin, data.size());
-				/* This is stop condition, not a data bit. */
-				mResults->AddMarker(bit.sampleBegin, AnalyzerResults::Stop, mSettings->mPosChannel);
-				/* Advance D- and D+. */
-				if (mDataP->DoMoreTransitionsExistInCurrentData() && mDataN->DoMoreTransitionsExistInCurrentData()) {
-					mDataN->AdvanceToNextEdge();
-					mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
-				}
-
+			/* If this is a bit on D+, there won't be any transitions on D- until D+ falling edge. */
+			/* Check if there's a transition on D- until D+ falling edge making it a stop condition. */
+			/* Check if there are no more transitions on D+ (so there won't be a falling edge) but there is a transition on D- making it a stop condition. */
+			if ((mDataN->GetSampleOfNextEdge() <= mDataP->GetSampleOfNextEdge()) || (!mDataP->DoMoreTransitionsExistInCurrentData() && mDataN->DoMoreTransitionsExistInCurrentData())) {
+				/* Advance D-. */
+				mDataN->AdvanceToNextEdge();
+				/* Both D+ and D- are high now, this is stop. */
+				DEBUG_PRINTF("Stop condition @ %lld / data.size() = %lli", mDataP->GetSampleNumber(), data.size());
+				mResults->AddMarker(mDataP->GetSampleNumber(), AnalyzerResults::Stop, mSettings->mPosChannel);
 				/* Exit bitsteam. */
 				DEBUG_PRINTF("Exit bitstream.");
 				break;
 			}
 
-			/* Check if next edge is too far - this could be stop condition. */
+			/* Bit's on D+. */
+			Bit bit;
+			DEBUG_PRINTF("D+ bit.");
+
+			/* Remember bit stats. */
+			bit.sampleBegin = mDataP->GetSampleNumber();
+			bit.sampleEnd = mDataP->GetSampleOfNextEdge();
+
+			/* Check if next edge is too far. */
 			if ((bit.sampleEnd - bit.sampleBegin) >= (pulseLength * 5)) {
 				DEBUG_PRINTF("Next edge too far.");
-
-				/* Advance D- to D+. */
-				/* TODO: check for transitions. */
-				mDataN->AdvanceToAbsPosition(bit.sampleBegin);
-
-				/* Check if D- is low and it's next edge is close. */
-				if ((bit.sampleEnd == -1) || ((mDataN->GetBitState()) == BIT_LOW) && ((mDataN->GetSampleOfNextEdge() - mDataN->GetSampleNumber()) <= (pulseLength * 5))) {
-					DEBUG_PRINTF("Stop condition (edge too far) @ %lld / data.size() = %lli", bit.sampleBegin, data.size());
-					/* This is stop condition, not a data bit. */
-					mResults->AddMarker(bit.sampleBegin, AnalyzerResults::Stop, mSettings->mPosChannel);
-					/* Advance D- and D+. */
-					mDataN->AdvanceToNextEdge();
-					mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
-
-					/* Exit bitsteam. */
-					DEBUG_PRINTF("Exit bitstream.");
-					break;
-				} else {
-					mResults->AddMarker(bit.sampleBegin, AnalyzerResults::ErrorX, mSettings->mPosChannel);
-					/* Exit bitsteam. */
-					break;
-				}
+				/* Mark an error at sample begin. */
+				mResults->AddMarker(bit.sampleBegin, AnalyzerResults::ErrorX, mSettings->mPosChannel);
+				/* Advance D+ over this long pulse (to bit.sampleEnd). */
+				mDataP->AdvanceToNextEdge();
+				/* Advance D-. */
+				mDataN->AdvanceToAbsPosition(mDataP->GetSampleNumber());
+				/* Exit bitsteam. */
+				break;
 			}
 
 			bit.value = BIT_HIGH;
+			/* Mark the bit in the middle. */
 			mResults->AddMarker((bit.sampleBegin >> 1) + (bit.sampleEnd >> 1), AnalyzerResults::One, mSettings->mPosChannel);
 
-			/* Go to falling edge. */
+			/* Go to falling edge (bit.sampleEnd). */
 			mDataP->AdvanceToNextEdge();
 			/* Save the bit. */
 			data.push_back(bit);
 			/* Advance D- to bit's end. */
-			mDataN->AdvanceToAbsPosition(bit.sampleEnd);
+			mDataN->AdvanceToAbsPosition(mDataP->GetSampleNumber());
 		}
 		else {
 			/* Check if next edge is too far. */
@@ -299,34 +306,56 @@ U64 MIPI_DSI_LP_Analyzer::GetBitstream()
 				break;
 			}
 
+			/* Go to rising edge. */
+			mDataN->AdvanceToNextEdge();
+			/* Advance D+ to D-. */
+			mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
+
+			/* If this is a bit on D-, there won't be any transitions on D+ until D- falling edge. */
+			/* Check if there's a transition on D+ until D- falling edge making it a (failed) stop condition. */
+			/* Check if there are no more transitions on D- (so there won't be a falling edge) but there is a transition on D+ making it a (failed) stop condition. */
+			if ((mDataP->GetSampleOfNextEdge() <= mDataN->GetSampleOfNextEdge()) || (!mDataN->DoMoreTransitionsExistInCurrentData() && mDataP->DoMoreTransitionsExistInCurrentData())) {
+				/* Advance D+. */
+				mDataP->AdvanceToNextEdge();
+				/* Both D+ and D- are high now, this is failed stop (as stop occurs with D+ going high first). */
+				DEBUG_PRINTF("Failed Stop condition on D- @ %lld / data.size() = %lli", mDataP->GetSampleNumber(), data.size());
+				mResults->AddMarker(mDataN->GetSampleNumber(), AnalyzerResults::ErrorX, mSettings->mNegChannel);
+				/* Exit bitsteam. */
+				DEBUG_PRINTF("Exit bitstream.");
+				break;
+			}
+
 			/* Bit's on D-. */
 			Bit bit;
 			DEBUG_PRINTF("D- bit.");
-			/* Go to rising edge. */
-			mDataN->AdvanceToNextEdge();
+
 			/* Remember bit stats. */
 			bit.sampleBegin = mDataN->GetSampleNumber();
 			bit.sampleEnd = mDataN->GetSampleOfNextEdge();
 
 			/* Check if next edge is too far. */
 			if ((bit.sampleEnd - bit.sampleBegin) >= (pulseLength * 5)) {
-				/* Add error marker. */
+				DEBUG_PRINTF("Next edge too far.");
+				/* Mark an error at sample begin. */
 				mResults->AddMarker(bit.sampleBegin, AnalyzerResults::ErrorX, mSettings->mNegChannel);
-				/* Advance D+ to D-. */
-				mDataP->AdvanceToAbsPosition(bit.sampleBegin);
+				/* Advance D- over this long pulse (to bit.sampleEnd). */
+				mDataN->AdvanceToNextEdge();
+				/* Advance D+. */
+				mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
 				/* Exit bitsteam. */
 				break;
 			}
 
 			bit.value = BIT_LOW;
+			/* Mark the bit in the middle. */
 			mResults->AddMarker((bit.sampleBegin >> 1) + (bit.sampleEnd >> 1), AnalyzerResults::Zero, mSettings->mNegChannel);
 
-			/* Go to falling edge. */
+			/* Go to falling edge (bit.sampleEnd). */
 			mDataN->AdvanceToNextEdge();
 			/* Save the bit. */
 			data.push_back(bit);
 			/* Advance D+ to bit's end. */
-			mDataP->AdvanceToAbsPosition(bit.sampleEnd);
+			mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
 		}
 	}
 
