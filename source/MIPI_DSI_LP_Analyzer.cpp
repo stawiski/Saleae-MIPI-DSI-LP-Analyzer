@@ -71,65 +71,69 @@ void MIPI_DSI_LP_Analyzer::WorkerThread()
 
 bool MIPI_DSI_LP_Analyzer::GetStart()
 {
-	/* D- needs to be low for start condition. */
-	while (mDataN->GetBitState() != BIT_LOW) {
-		DEBUG_PRINTF("D- is not low.");
-		/* Advance D- and D+. */
-		mDataN->AdvanceToNextEdge();
-		mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
+	/* D+ and D- should be at the same sample here. */
+	{
+		/* If D+ is behind D-. */
+		if (mDataP->GetSampleNumber() < mDataN->GetSampleNumber()) {
+			/* Advance D+ to D-. */
+			mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
+			return false;
+		}
+		/* If D- is behind D+. */
+		if (mDataN->GetSampleNumber() < mDataP->GetSampleNumber()) {
+			/* Advance D- to D+. */
+			mDataN->AdvanceToAbsPosition(mDataP->GetSampleNumber());
+			return false;
+		}
 	}
 
-	/* Advancing D+ to D- should not cause transition. */
-	if (mDataP->WouldAdvancingToAbsPositionCauseTransition(mDataN->GetSampleNumber())) {
-		DEBUG_PRINTF("Error: Unexpected D+ transition.");
-		/* Advance D+ to error edge. */
+	/* Both D+ and D- must be high for start condition. */
+	{
+		/* Check D+. */
+		if (mDataP->GetBitState() != BIT_HIGH) {
+			/* Advance D+. */
+			mDataP->AdvanceToNextEdge();
+			return false;
+		}
+		/* Check D-. */
+		if (mDataN->GetBitState() != BIT_HIGH) {
+			/* Advance D-. */
+			mDataN->AdvanceToNextEdge();
+			return false;
+		}
+	}
+
+	/* D+ and D- are both high now. For a start condition, D- should go low first. */
+	/* Check if D+ goes low first instead. */
+	if (mDataP->GetSampleOfNextEdge() <= mDataN->GetSampleOfNextEdge()) {
+		/* Advance D+. */
 		mDataP->AdvanceToNextEdge();
-		/* Mark error on D+. */
-		mResults->AddMarker(mDataP->GetSampleNumber(), AnalyzerResults::ErrorX, mSettings->mPosChannel);
-		/* Advance D+ to D-. */
-		mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
 		return false;
 	}
 
+	/* D- goes low first, advance to falling edge. */
+	mDataN->AdvanceToNextEdge();
 	/* Advance D+ to D-. */
 	mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
 
-	/* D+ should be high. */
-	if (mDataP->GetBitState() != BIT_HIGH) {
-		DEBUG_PRINTF("Error: D+ is not high.");
-		/* Mark error on D+. */
-		mResults->AddMarker(mDataP->GetSampleNumber(), AnalyzerResults::ErrorX, mSettings->mPosChannel);
-		/* Advance D- and D+. */
+	/* D- is low, D+ is high, next transition should be D+ going low. */
+	/* Check if next transition is on D- instead. */
+	if (mDataN->GetSampleOfNextEdge() <= mDataP->GetSampleOfNextEdge()) {
+		/* Advance D-. */
 		mDataN->AdvanceToNextEdge();
-		mDataP->AdvanceToAbsPosition(mDataN->GetSampleNumber());
 		return false;
 	}
 
 	/* Advance D+ to falling edge. */
 	mDataP->AdvanceToNextEdge();
-
-	/* Advancing D- to D+ should not cause transition. */
-	if (mDataN->WouldAdvancingToAbsPositionCauseTransition(mDataP->GetSampleNumber())) {
-		DEBUG_PRINTF("Error: Unexpected D- transition.");
-		/* Advance D- to error edge. */
-		mDataN->AdvanceToNextEdge();
-		/* Mark error on D-. */
-		mResults->AddMarker(mDataN->GetSampleNumber(), AnalyzerResults::ErrorX, mSettings->mNegChannel);
-		/* Advance D- to D+. */
-		mDataN->AdvanceToAbsPosition(mDataP->GetSampleNumber());
-		return false;
-	}
-
 	/* Advance D- to D+. */
 	mDataN->AdvanceToAbsPosition(mDataP->GetSampleNumber());
 
-	/* D- should be low. */
-	if (mDataN->GetBitState() != BIT_LOW) {
-		DEBUG_PRINTF("Error: D- is not low.");
-		/* Mark error on D-. */
-		mResults->AddMarker(mDataN->GetSampleNumber(), AnalyzerResults::ErrorX, mSettings->mNegChannel);
-		/* Advance D-. */
-		mDataN->AdvanceToNextEdge();
+	/* D+ and D- are both low now. Next transition should be on D-. */
+	/* Check if next transition is on D+ instead. */
+	if (mDataP->GetSampleOfNextEdge() <= mDataN->GetSampleOfNextEdge()) {
+		/* Advance D+. */
+		mDataP->AdvanceToNextEdge();
 		return false;
 	}
 
@@ -152,7 +156,7 @@ bool MIPI_DSI_LP_Analyzer::GetStart()
 	mDataN->AdvanceToNextEdge();
 
 	/* Check if edge timings are outside boundary. */
-	if ((startToPulse <= pulseLength) || (startToPulse > (pulseLength * 5))) {
+	if (startToPulse > (pulseLength * 5)) {
 		DEBUG_PRINTF("Error: D- pulse timing outside boundary.");
 		mResults->AddMarker(sampleStart, AnalyzerResults::ErrorX, mSettings->mNegChannel);
 		return false;
