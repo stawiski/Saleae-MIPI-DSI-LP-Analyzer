@@ -25,114 +25,32 @@ void MIPI_DSI_LP_AnalyzerResults::GenerateBubbleText( U64 frame_index, Channel& 
 	ClearResultStrings();
 	Frame frame = GetFrame( frame_index );
 
+	/* Convert the data byte into a string for generic result string. */
 	AnalyzerHelpers::GetNumberString(frame.mData1, display_base, 8, number_str, 128);
 
-	if (frame.mType == MIPI_DSI_PACKET_SHORT)
-	{
-		/* Always show at least the data. */
-		AddResultString(number_str);
+	/* Check if it's the first byte of the packet. */
+	if ((frame.mData2 & UINT32_MAX) == 0U) {
+		char number_str_VC[16];
+		char number_str_DT[16];
+		std::stringstream ss;
 
-		/* Check if it's the first byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == 0U) {
-			std::stringstream ss;
+		ss << "DI [" << number_str << "]";
+		AddResultString(ss.str().c_str());
+		ss.str("");
 
-			ss << "DI [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		} else
-		/* Check if it's the second byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == 1U) {
-			std::stringstream ss;
+		/* Virtual Channel Field is DI[7:6]. */
+		AnalyzerHelpers::GetNumberString((frame.mData1 >> 6) & 0x3, display_base, 2, number_str_VC, 16);
+		/* Data Type Field is DI[5:0]. */
+		AnalyzerHelpers::GetNumberString(frame.mData1 & 0x3F, display_base, 6, number_str_DT, 16);
 
-			ss << "DATA0 [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		} else
-		/* Check if it's the third byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == 2U) {
-			std::stringstream ss;
+		ss << "VC [" << number_str_VC << "] " << "DT [" << number_str_DT << "]";
+		AddResultString(ss.str().c_str());
+		ss.str("");
 
-			ss << "DATA1 [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		} else
-		/* Check if it's the fourth byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == 3U) {
-			std::stringstream ss;
-
-			ss << "ECC [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		}
-	} else
-	if (frame.mType == MIPI_DSI_PACKET_LONG)
-	{
-		/* Always show at least the data. */
-		AddResultString(number_str);
-
-		/* Check if it's the first byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == 0U) {
-			std::stringstream ss;
-
-			ss << "DI [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		} else
-		/* Check if it's the second byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == 1U) {
-			std::stringstream ss;
-
-			ss << "WC [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		}
-		else
-		/* Check if it's the third byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == 2U) {
-			std::stringstream ss;
-
-			ss << "WC [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		} else
-		/* Check if it's the fourth byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == 3U) {
-			std::stringstream ss;
-
-			ss << "ECC [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		} else
-		/* Check if it's the second to last byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == (((frame.mData2 >> 32) & UINT32_MAX) - 2U)) {
-			std::stringstream ss;
-
-			ss << "CRC [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		} else
-		/* Check if it's the last byte of the packet. */
-		if ((frame.mData2 & UINT32_MAX) == (((frame.mData2 >> 32) & UINT32_MAX) - 1U)) {
-			std::stringstream ss;
-
-			ss << "CRC [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		} else
-		/* Check if it's a data packet (between ECC and CRC). */
-		if (((frame.mData2 & UINT32_MAX) > 3U) && (frame.mData2 & UINT32_MAX) < (((frame.mData2 >> 32) & UINT32_MAX) - 2U)) {
-			std::stringstream ss;
-
-			ss << "DATA [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-			
-			ss << "DATA[" << ((frame.mData2 & UINT32_MAX) - 4U) << "] = [" << number_str << "]";
-			AddResultString(ss.str().c_str());
-			ss.str("");
-		}
+		ss << "Virtual Channel [" << number_str_VC << "] " << "Data Type [" << number_str_DT << "]";
+		AddResultString(ss.str().c_str());
+		ss.str("");
 	} else {
-		/* Packet unrecognized. */
 		AddResultString(number_str);
 	}
 }

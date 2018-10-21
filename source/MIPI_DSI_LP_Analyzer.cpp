@@ -367,7 +367,6 @@ U64 MIPI_DSI_LP_Analyzer::GetData(void)
 {
 	Frame frame;
 	U64 byteIndex, byteCount;
-	U64 packetType;
 
 	/* Initialize frame's fields. */
 	frame.mStartingSampleInclusive = 0;
@@ -380,19 +379,6 @@ U64 MIPI_DSI_LP_Analyzer::GetData(void)
 	/* Number of bytes in the stream. */
 	byteCount = data.size() / 8U;
 	byteIndex = 0U;
-
-	if (byteCount == 4U) {
-		/* Short packet. */
-		packetType = MIPI_DSI_PACKET_SHORT;
-	} else
-	if (byteCount >= 6U) {
-		/* Long packet */
-		packetType = MIPI_DSI_PACKET_LONG;
-	} else
-	{
-		/* Unrecognized packet. */
-		packetType = MIPI_DSI_PACKET_UNRECOGNIZED;
-	}
 
 	/* Extract bitstream by 8 bits. */
 	while (data.size() >= 8)
@@ -414,7 +400,6 @@ U64 MIPI_DSI_LP_Analyzer::GetData(void)
 		/* Fill frame with data. */
 		frame.mData1 = byte;
 		frame.mData2 = ((byteCount & UINT32_MAX) << 32U) | (byteIndex & UINT32_MAX);
-		frame.mType = (U8)packetType;
 
 		mResults->AddFrame(frame);
 		byteIndex++;
