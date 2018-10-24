@@ -3,10 +3,6 @@
 
 #include <AnalyzerResults.h>
 
-#define MIPI_DSI_PACKET_UNRECOGNIZED			0U
-#define MIPI_DSI_PACKET_SHORT					1U
-#define MIPI_DSI_PACKET_LONG					2U
-
 class MIPI_DSI_LP_Analyzer;
 class MIPI_DSI_LP_AnalyzerSettings;
 
@@ -28,6 +24,7 @@ protected: //functions
 protected:  //vars
 	MIPI_DSI_LP_AnalyzerSettings* mSettings;
 	MIPI_DSI_LP_Analyzer* mAnalyzer;
+	uint32_t DSI_packetsCount;
 };
 
 #endif //MIPI_DSI_LP__ANALYZER_RESULTS
